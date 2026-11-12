@@ -66,6 +66,7 @@ h2{font-size:16px;font-weight:700;margin:0;text-wrap:balance}
 .care.mini .t{font-size:16px}
 .cares{display:flex;flex-direction:column;gap:10px}
 .rest{background:var(--sunken);border-radius:12px;padding:14px;text-align:center}
+.soon{background:var(--warn-soft);color:var(--warn);border-radius:12px;padding:10px 12px;font-size:15px}
 
 .quota{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;font-size:15px}
 .quota + .quota{border-top:1px solid var(--line);padding-top:10px}
@@ -86,6 +87,7 @@ table.plan tr.now{background:var(--accent-soft)}
 .cal button{aspect-ratio:1/1.05;min-width:0;border:1px solid transparent;border-radius:10px;background:var(--bg);padding:3px 0 0;display:flex;flex-direction:column;align-items:center;gap:3px}
 .cal button .num{font-size:17px;line-height:1.1}
 .cal button.paused{background:var(--warn-soft)}
+.cal button .cl{font-size:11px;font-weight:700;color:var(--warn);line-height:1}
 .cal button.today{border-color:var(--accent)}
 .cal button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent)}
 .cal .dots{display:flex;gap:2px;flex-wrap:wrap;justify-content:center}
@@ -150,13 +152,25 @@ textarea{width:100%;border-radius:12px;border:1px solid var(--line);background:v
 
   <section class="view" id="view-set" hidden>
     <div class="panel">
-      <h2>お休み期間</h2>
-      <div class="muted small">クリニックの施術前後など、機器を休む期間を入れておくと、その間はメニューが「お休み」になります。日数はクリニックに確認した期間を入れてください。</div>
+      <h2>クリニックの施術</h2>
+      <div class="muted small">施術日を登録すると、その前後は自動でメニューが「お休み」になり、再開日も出ます。休む日数は仮の値です。クリニックで言われた日数に直してください。</div>
+      <label class="field">施術名<input type="text" id="cName" maxlength="30" placeholder="例：ソノクイーン"></label>
+      <label class="field">施術日<input type="date" id="cDate"></label>
+      <div class="two">
+        <label class="field">前に休む日数<input type="number" id="cBefore" inputmode="numeric" min="0" max="60" value="2"></label>
+        <label class="field">後に休む日数<input type="number" id="cAfter" inputmode="numeric" min="0" max="90" value="7"></label>
+      </div>
+      <button class="primary" id="cAdd" type="button">施術を登録</button>
+      <div id="clinics"></div>
+    </div>
+    <div class="panel">
+      <h2>そのほかのお休み期間</h2>
+      <div class="muted small">旅行や肌の調子が悪いときなど、機器を休む期間を入れておけます。</div>
       <div class="two">
         <label class="field">はじめ<input type="date" id="pFrom"></label>
         <label class="field">おわり<input type="date" id="pTo"></label>
       </div>
-      <label class="field">メモ（施術名など）<input type="text" id="pLabel" maxlength="30" placeholder="例：施術の前後"></label>
+      <label class="field">メモ<input type="text" id="pLabel" maxlength="30" placeholder="例：旅行"></label>
       <button class="second" id="pAdd" type="button">お休み期間を追加</button>
       <div id="pauses"></div>
     </div>
@@ -198,14 +212,18 @@ const fmtShort=s=>{const d=parse(s);return (d.getMonth()+1)+"/"+d.getDate()};
 const today=()=>ymd(new Date());
 const label=id=>ITEMS[id].dev+" "+ITEMS[id].mode;
 
-const S={log:new Map(),pauses:[],date:today(),view:"today",month:today().slice(0,7),sel:today()};
-function save(){try{localStorage.setItem(LS,JSON.stringify({log:[...S.log],pauses:S.pauses}))}catch(e){notice("保存できませんでした。ブラウザの空き容量をご確認ください。",true)}}
-function load(){try{const o=JSON.parse(localStorage.getItem(LS)||"null");if(o){S.log=new Map((o.log||[]).filter(([d,a])=>Array.isArray(a)&&a.length));S.pauses=Array.isArray(o.pauses)?o.pauses:[]}}catch(e){}}
+const S={log:new Map(),pauses:[],clinics:[],date:today(),view:"today",month:today().slice(0,7),sel:today()};
+function save(){try{localStorage.setItem(LS,JSON.stringify({log:[...S.log],pauses:S.pauses,clinics:S.clinics}))}catch(e){notice("保存できませんでした。ブラウザの空き容量をご確認ください。",true)}}
+function load(){try{const o=JSON.parse(localStorage.getItem(LS)||"null");if(o){S.log=new Map((o.log||[]).filter(([d,a])=>Array.isArray(a)&&a.length));S.pauses=Array.isArray(o.pauses)?o.pauses:[];S.clinics=Array.isArray(o.clinics)?o.clinics:[]}}catch(e){}}
 function notice(msg,warn){const n=$("notice");if(!msg){n.hidden=true;return}n.textContent=msg;n.className="notice"+(warn?" warn":"");n.hidden=false}
 
 const done=(d,id)=>(S.log.get(d)||[]).includes(id);
 const weekOf=d=>{const s=shift(d,-((parse(d).getDay()+6)%7));return Array.from({length:7},(_,i)=>shift(s,i))};
-const pauseOn=d=>S.pauses.find(p=>p.from<=d&&d<=p.to)||null;
+const clinicSpan=c=>({from:shift(c.date,-c.before),to:shift(c.date,c.after),label:c.name||"クリニックの施術",clinic:c});
+const clinicOn=d=>S.clinics.find(c=>c.date===d)||null;
+const pauseOn=d=>{const c=S.clinics.map(clinicSpan).filter(p=>p.from<=d&&d<=p.to).sort((a,b)=>a.to<b.to?1:-1)[0];return c||S.pauses.find(p=>p.from<=d&&d<=p.to)||null};
+/* First day after d that is outside every rest window. */
+function resumeDay(d){let x=shift(d,1),n=0;while(pauseOn(x)&&n++<400)x=shift(x,1);return x}
 function lastDone(id,before){let best="";S.log.forEach((a,d)=>{if(d<before&&a.includes(id)&&d>best)best=d});return best}
 function weekCount(g,d,skip){return weekOf(d).filter(x=>x!==skip&&(S.log.get(x)||[]).some(i=>ITEMS[i].g===g)).length}
 /* Reasons to hold off on logging `id` on day `d` (ignoring whether it is already logged). */
@@ -252,8 +270,15 @@ function renderToday(){
   $("dayText").textContent=fmtDay(d);$("nextDay").disabled=d>=t;
   $("menuTitle").textContent=(d===t?"今日":fmtShort(d))+"のメニュー";
   const menu=$("menu"),plan=PLAN[parse(d).getDay()],p=pauseOn(d);menu.textContent="";
-  if(p){const r=el("div","rest");r.appendChild(el("strong",null,"お休み期間です"));r.appendChild(el("div","small muted",fmtShort(p.from)+"〜"+fmtShort(p.to)+(p.label?"　"+p.label:"")+"。機器はお休みして、肌を整える日にします。"));menu.appendChild(r)}
+  if(p){
+    const r=el("div","rest"),c=p.clinic,k=c?diff(d,c.date):0;
+    r.appendChild(el("strong",null,c?(k===0?"今日はクリニックの施術日":k<0?"施術前のお休み期間":"施術後のお休み期間"):"お休み期間です"));
+    r.appendChild(el("div","small muted",(c?(c.name||"施術")+"（"+fmtShort(c.date)+"）"+(k<0?"まであと"+(-k)+"日":k>0?"から"+k+"日目":"")+"。":(p.label?p.label+"。":""))+"機器はお休みです。再開は"+fmtDay(resumeDay(d))+"から。"));
+    menu.appendChild(r);
+  }
   else{
+    const next=S.clinics.map(clinicSpan).filter(x=>x.from>d&&diff(x.from,d)<=14).sort((a,b)=>a.from<b.from?-1:1)[0];
+    if(next)menu.appendChild(el("div","soon",(next.clinic.name||"施術")+"（"+fmtShort(next.clinic.date)+"）に向けて、"+fmtDay(next.from)+"から機器はお休みに入ります。"));
     if(parse(d).getDay()===0){const r=el("div","rest");r.appendChild(el("strong",null,"今日は回復の日"));r.appendChild(el("div","small muted","光やRFのケアはお休み。MOISTは足しても大丈夫です。"));menu.appendChild(r)}
     plan.forEach(id=>menu.appendChild(careRow(id,d)));
   }
@@ -274,19 +299,22 @@ function renderCal(){
   for(let n=1;n<=days;n++){
     const d=S.month+"-"+String(n).padStart(2,"0"),b=el("button",(pauseOn(d)?"paused ":"")+(d===t?"today":""));b.type="button";
     b.setAttribute("aria-pressed",String(d===S.sel));b.appendChild(el("span","num",String(n)));
+    const cl=clinicOn(d);if(cl)b.appendChild(el("span","cl","施術"));
     const ids=S.log.get(d)||[],dots=el("span","dots");
     ["bs","vl","epi","dl"].forEach(g=>{if(ids.some(i=>ITEMS[i].g===g)){const i=el("i");i.style.setProperty("--g","var(--g-"+g+")");dots.appendChild(i)}});
-    b.appendChild(dots);b.setAttribute("aria-label",fmtDay(d)+(ids.length?" "+ids.map(label).join("、"):" 記録なし"));
+    b.appendChild(dots);b.setAttribute("aria-label",fmtDay(d)+(cl?" クリニックの施術":"")+(ids.length?" "+ids.map(label).join("、"):" 記録なし"));
     b.onclick=()=>{S.sel=d;renderCal()};cal.appendChild(b);
   }
   const lg=$("legend");lg.textContent="";Object.keys(G).forEach(g=>{const s=el("span"),i=el("span","dot");i.style.setProperty("--g","var(--g-"+g+")");s.appendChild(i);s.appendChild(document.createTextNode(G[g]));lg.appendChild(s)});
-  const s=el("span");s.appendChild(document.createTextNode("□ 薄い色の日はお休み期間"));lg.appendChild(s);
+  const s=el("span");s.appendChild(document.createTextNode("薄い色の日はお休み期間、「施術」はクリニックの日"));lg.appendChild(s);
   const det=$("dayDetail");det.textContent="";
   const head=el("div","rowhead");head.appendChild(el("h2",null,fmtDay(S.sel)));
   if(S.sel<=t){const o=el("button","link","この日を開く");o.type="button";o.onclick=()=>{S.date=S.sel;setView("today")};head.appendChild(o)}
   det.appendChild(head);
   const ids=S.log.get(S.sel)||[],p=pauseOn(S.sel);
-  if(p)det.appendChild(el("div","small muted","お休み期間"+(p.label?"（"+p.label+"）":"")));
+  const cd=clinicOn(S.sel);
+  if(cd)det.appendChild(el("div",null,"クリニックの施術："+(cd.name||"（名前なし）")));
+  if(p)det.appendChild(el("div","small muted","お休み期間"+(p.label?"（"+p.label+"）":"")+"　再開は"+fmtShort(resumeDay(S.sel))+"から"));
   if(!ids.length)det.appendChild(el("div","empty","記録はありません。"));
   ORDER.filter(i=>ids.includes(i)).forEach(i=>{const r=el("div");const dot=el("span","dot");dot.style.setProperty("--g","var(--g-"+ITEMS[i].g+")");r.appendChild(dot);r.appendChild(document.createTextNode(label(i)));det.appendChild(r)});
   const plan=$("plan");plan.textContent="";
@@ -295,6 +323,11 @@ function renderCal(){
     tr.appendChild(td);plan.appendChild(tr)});
 }
 function renderSet(){
+  const cb=$("clinics");cb.textContent="";
+  S.clinics.slice().sort((a,b)=>a.date<b.date?1:-1).forEach(c=>{
+    const sp=clinicSpan(c),r=el("div","pause"),t=el("div",null,fmtDay(c.date)+"　"+(c.name||"施術"));
+    t.appendChild(el("div","small muted","お休み "+fmtShort(sp.from)+"〜"+fmtShort(sp.to)+"（前"+c.before+"日・後"+c.after+"日）"));r.appendChild(t);
+    const x=el("button","x","×");x.type="button";x.setAttribute("aria-label","この施術の登録を消す");x.onclick=()=>{S.clinics=S.clinics.filter(q=>q!==c);save();render()};r.appendChild(x);cb.appendChild(r)});
   const box=$("pauses");box.textContent="";
   S.pauses.slice().sort((a,b)=>a.from<b.from?1:-1).forEach(p=>{
     const r=el("div","pause"),t=el("div",null,fmtDay(p.from)+" 〜 "+fmtDay(p.to));if(p.label)t.appendChild(el("div","small muted",p.label));r.appendChild(t);
@@ -318,7 +351,15 @@ $("pAdd").onclick=()=>{
   if(t<f){notice("おわりの日は、はじめの日より後にしてください。",true);return}
   S.pauses.push({from:f,to:t,label:$("pLabel").value.trim()});save();$("pFrom").value=$("pTo").value=$("pLabel").value="";notice("お休み期間を追加しました。");render();
 };
-const backupText=()=>JSON.stringify({app:"biyou-note",exported:today(),log:[...S.log].sort(),pauses:S.pauses});
+$("cAdd").onclick=()=>{
+  const date=$("cDate").value,nb=parseInt($("cBefore").value,10),na=parseInt($("cAfter").value,10);
+  if(!date){notice("施術日を選んでください。",true);return}
+  if(!(nb>=0&&nb<=60)||!(na>=0&&na<=90)){notice("休む日数は、前は0〜60、後は0〜90の数字で入れてください。",true);return}
+  const c={date:date,name:$("cName").value.trim(),before:nb,after:na};S.clinics.push(c);save();
+  $("cName").value=$("cDate").value="";const sp=clinicSpan(c);
+  notice("登録しました。"+fmtDay(sp.from)+"〜"+fmtDay(sp.to)+"は機器をお休みにします。");render();
+};
+const backupText=()=>JSON.stringify({app:"biyou-note",exported:today(),log:[...S.log].sort(),pauses:S.pauses,clinics:S.clinics});
 $("bkCopy").onclick=()=>{
   const t=backupText(),box=$("bkText"),ok=()=>{try{localStorage.setItem(LS_BK,today())}catch(e){}renderSet();$("bkCopy").textContent="コピーしました";setTimeout(()=>{$("bkCopy").textContent="記録をコピーする"},2500)};
   const fb=()=>{box.value=t;box.focus();box.select();notice("自動でコピーできませんでした。下の欄の文字を全部選んでコピーしてください。")};
@@ -329,6 +370,7 @@ $("bkLoad").onclick=()=>{
     const o=JSON.parse($("bkText").value.trim());if(!o||!Array.isArray(o.log))throw 0;
     let n=0;o.log.forEach(([d,a])=>{if(/^\d{4}-\d{2}-\d{2}$/.test(d)&&Array.isArray(a)){const ids=a.filter(i=>ITEMS[i]);if(ids.length){S.log.set(d,ids);n++}}});
     if(Array.isArray(o.pauses))o.pauses.forEach(p=>{if(p&&p.from&&p.to&&!S.pauses.some(q=>q.from===p.from&&q.to===p.to))S.pauses.push({from:p.from,to:p.to,label:String(p.label||"")})});
+    if(Array.isArray(o.clinics))o.clinics.forEach(c=>{if(c&&c.date&&!S.clinics.some(q=>q.date===c.date&&q.name===c.name))S.clinics.push({date:c.date,name:String(c.name||""),before:Number(c.before)||0,after:Number(c.after)||0})});
     save();$("bkText").value="";notice(n+"日分の記録を読み込みました。");render();
   }catch(e){notice("読み込めませんでした。コピーした内容をそのまま貼り付けてください。",true)}
 };
